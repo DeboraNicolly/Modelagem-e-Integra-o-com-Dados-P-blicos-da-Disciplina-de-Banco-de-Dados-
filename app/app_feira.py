@@ -236,7 +236,7 @@ with aba_analise:
         "Maior Volume Registrado no Mês (kg)": {"coluna": "Max_kg", "cor": "#f59e0b"}, # Laranja
         "Menor Volume Registrado no Mês (kg)": {"coluna": "Min_kg", "cor": "#ec4899"}, # Rosa
         "Valor Total Movimentado (R$)": {"coluna": "Total_Reais", "cor": "#8b5cf6"},  # Roxo
-        "Total de Produtores / Clientes Atendidos": {"coluna": "Clientes_Atendidos", "cor": "#06b6d4") # Azul claro
+        "Total de Produtores / Clientes Atendidos": {"coluna": "Clientes_Atendidos", "cor": "#06b6d4"} # Azul claro
     }
 
     col_sel, col_info = st.columns([2, 1])
