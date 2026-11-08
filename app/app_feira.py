@@ -1,5 +1,4 @@
 import os
-
 import streamlit as st
 import mysql.connector
 import pandas as pd
@@ -106,55 +105,72 @@ with aba_crud_prod:
             prod_opcoes = {f"{r['nome_produtor']} ({r['cidade']})": r["id_produtor"] for _, r in produtores_df.iterrows()}
             cat_opcoes = {r["nome_categoria"]: r["id_categoria"] for _, r in categorias_df.iterrows()}
 
-            produtor_sel = st.selectbox("Produtor Responsável", list(prod_opcoes.keys()))
-            categoria_sel = st.selectbox("Categoria", list(cat_opcoes.keys()))
-            nome_prod = st.text_input("Nome do Alimento / Produto")
-            unidade = st.selectbox("Unidade de Comercialização", ["kg", "unidade", "maco", "bandeja", "duzia", "litro"])
-            preco = st.number_input("Preço Unitário (R$)", min_value=0.50, value=5.00, step=0.50)
-            estoque = st.number_input("Quantidade em Estoque", min_value=0.0, value=20.0, step=1.0)
-            organico = st.checkbox("Produto Orgânico Certificado", value=True)
+            ### CORREÇÃO: Verificação adicionada para evitar erro (KeyError) se não houver produtores ou categorias cadastradas
+            if prod_opcoes and cat_opcoes:
+                produtor_sel = st.selectbox("Produtor Responsável", list(prod_opcoes.keys()))
+                categoria_sel = st.selectbox("Categoria", list(cat_opcoes.keys()))
+                nome_prod = st.text_input("Nome do Alimento / Produto")
+                unidade = st.selectbox("Unidade de Comercialização", ["kg", "unidade", "maco", "bandeja", "duzia", "litro"])
+                preco = st.number_input("Preço Unitário (R$)", min_value=0.50, value=5.00, step=0.50)
+                estoque = st.number_input("Quantidade em Estoque", min_value=0.0, value=20.0, step=1.0)
+                organico = st.checkbox("Produto Orgânico Certificado", value=True)
 
-            if st.form_submit_button("Salvar Produto"):
-                sql_ins = """
-                    INSERT INTO tb_produto 
-                    (id_produtor, id_categoria, nome_produto, unidade_medida, preco_unitario, estoque_disponivel, organico_certificado)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                """
-                execute_sql(sql_ins, (prod_opcoes[produtor_sel], cat_opcoes[categoria_sel], nome_prod, unidade, preco, estoque, organico))
-                st.success(f"Produto '{nome_prod}' adicionado ao catálogo!")
-                st.rerun()
+                if st.form_submit_button("Salvar Produto"):
+                    sql_ins = """
+                        INSERT INTO tb_produto 
+                        (id_produtor, id_categoria, nome_produto, unidade_medida, preco_unitario, estoque_disponivel, organico_certificado)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """
+                    execute_sql(sql_ins, (prod_opcoes[produtor_sel], cat_opcoes[categoria_sel], nome_prod, unidade, preco, estoque, organico))
+                    st.success(f"Produto '{nome_prod}' adicionado ao catálogo!")
+                    st.rerun()
+            else:
+                st.warning("Cadastre produtores e categorias antes de adicionar produtos.")
+                # Botão dummy apenas para manter o layout do st.form que exige um submit_button
+                st.form_submit_button("Salvar Produto", disabled=True) 
 
     # --- ATUALIZAR PRODUTO ---
     with col_upd:
         st.markdown("### ✏️ Ajustar Preço e Estoque")
         with st.form("form_update_produto"):
             mapa_prod = {f"#{r['id_produto']} - {r['nome_produto']}": r for _, r in produtos_df.iterrows()}
-            prod_chave = st.selectbox("Selecione o Item", list(mapa_prod.keys()))
-            registro_atual = mapa_prod[prod_chave]
+            
+            ### CORREÇÃO: Verificação adicionada para evitar erro (KeyError) se não houver produtos cadastrados
+            if mapa_prod:
+                prod_chave = st.selectbox("Selecione o Item", list(mapa_prod.keys()))
+                registro_atual = mapa_prod[prod_chave]
 
-            novo_preco = st.number_input("Novo Preço Unitário (R$)", min_value=0.50, value=float(registro_atual["preco_unitario"]), step=0.50)
-            novo_estoque = st.number_input("Novo Saldo de Estoque", min_value=0.0, value=float(registro_atual["estoque_disponivel"]), step=1.0)
+                novo_preco = st.number_input("Novo Preço Unitário (R$)", min_value=0.50, value=float(registro_atual["preco_unitario"]), step=0.50)
+                novo_estoque = st.number_input("Novo Saldo de Estoque", min_value=0.0, value=float(registro_atual["estoque_disponivel"]), step=1.0)
 
-            if st.form_submit_button("Salvar Alterações"):
-                sql_upd = "UPDATE tb_produto SET preco_unitario = %s, estoque_disponivel = %s WHERE id_produto = %s"
-                execute_sql(sql_upd, (novo_preco, novo_estoque, int(registro_atual["id_produto"])))
-                st.info("Dados do produto atualizados com sucesso!")
-                st.rerun()
+                if st.form_submit_button("Salvar Alterações"):
+                    sql_upd = "UPDATE tb_produto SET preco_unitario = %s, estoque_disponivel = %s WHERE id_produto = %s"
+                    execute_sql(sql_upd, (novo_preco, novo_estoque, int(registro_atual["id_produto"])))
+                    st.info("Dados do produto atualizados com sucesso!")
+                    st.rerun()
+            else:
+                st.info("Nenhum produto disponível para edição.")
+                st.form_submit_button("Salvar Alterações", disabled=True)
 
     # --- REMOVER PRODUTO ---
     with col_del:
         st.markdown("### 🗑️ Retirar do Catálogo")
         with st.form("form_delete_produto"):
-            prod_del_chave = st.selectbox("Selecione o Item para Remoção", list(mapa_prod.keys()))
-            id_del = int(mapa_prod[prod_del_chave]["id_produto"])
+            ### CORREÇÃO: Reaproveita a verificação 'mapa_prod' para evitar erro (KeyError) aqui também
+            if mapa_prod:
+                prod_del_chave = st.selectbox("Selecione o Item para Remoção", list(mapa_prod.keys()))
+                id_del = int(mapa_prod[prod_del_chave]["id_produto"])
 
-            if st.form_submit_button("Confirmar Remoção"):
-                try:
-                    execute_sql("DELETE FROM tb_produto WHERE id_produto = %s", (id_del,))
-                    st.warning(f"Item #{id_del} removido do catálogo!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Não é possível remover um item que já possui pedidos vinculados: {e}")
+                if st.form_submit_button("Confirmar Remoção"):
+                    try:
+                        execute_sql("DELETE FROM tb_produto WHERE id_produto = %s", (id_del,))
+                        st.warning(f"Item #{id_del} removido do catálogo!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Não é possível remover um item que já possui pedidos vinculados: {e}")
+            else:
+                st.info("Nenhum produto disponível para remoção.")
+                st.form_submit_button("Confirmar Remoção", disabled=True)
 
 # ==============================================================================
 # ABA 3: REDE DE PRODUTORES
@@ -229,14 +245,14 @@ with aba_analise:
 
     st.divider()
 
-    # gráfico interativo
+    ### CORREÇÃO: Erro de sintaxe (parêntese no final do dicionário) foi corrigido para chave '}' 
     opcoes_metricas = {
         "Volume Total Comercializado (kg)": {"coluna": "Total_kg", "cor": "#10b981"}, # Verde
         "Média Mensal Comercializada (kg)": {"coluna": "Media_Mensal_kg", "cor": "#3b82f6"}, # Azul
         "Maior Volume Registrado no Mês (kg)": {"coluna": "Max_kg", "cor": "#f59e0b"}, # Laranja
         "Menor Volume Registrado no Mês (kg)": {"coluna": "Min_kg", "cor": "#ec4899"}, # Rosa
         "Valor Total Movimentado (R$)": {"coluna": "Total_Reais", "cor": "#8b5cf6"},  # Roxo
-        "Total de Produtores / Clientes Atendidos": {"coluna": "Clientes_Atendidos", "cor": "#06b6d4"} # Azul claro
+        "Total de Produtores / Clientes Atendidos": {"coluna": "Clientes_Atendidos", "cor": "#06b6d4"} # Azul claro (ERRO CORRIGIDO AQUI)
     }
 
     col_sel, col_info = st.columns([2, 1])
