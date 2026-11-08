@@ -42,4 +42,4 @@ Projeto acadêmico de **Modelagem e Integração com Dados Públicos**, utilizan
 
 ## Segurança
 
-Não publique senhas reais ou arquivos `.env`. Os scripts foram adaptados para ler as credenciais de variáveis de ambiente.
+Não publique senhas reais ou arquivos `.env`. Os scripts foram adaptados para ler as credenciais de variáveis de ambiente .
