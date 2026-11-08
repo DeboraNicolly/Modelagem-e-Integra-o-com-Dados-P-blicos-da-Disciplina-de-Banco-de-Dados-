@@ -24,7 +24,11 @@ cnpo.columns = [
 cnpo.to_csv(PROCESSED_DIR / "cnpo_limpo.csv", index=False, sep=";", encoding="utf-8")
 
 # 3. Limpeza de Venda_Balcao
-venda_balcao["munipio_armazem_venda"] = venda_balcao["munipio_armazem_venda"].astype(str).str.strip()
+# A fonte original contém um erro de grafia; padronizar apenas no arquivo tratado.
+venda_balcao = venda_balcao.rename(columns={
+    "munipio_armazem_venda": "municipio_armazem_venda"
+})
+venda_balcao["municipio_armazem_venda"] = venda_balcao["municipio_armazem_venda"].astype(str).str.strip()
 venda_balcao["uf"] = venda_balcao["uf"].astype(str).str.strip()
 venda_balcao["valor_comercializado"] = (
     venda_balcao["valor_comercializado"].astype(str).str.replace(",", ".").astype(float).round(2)
