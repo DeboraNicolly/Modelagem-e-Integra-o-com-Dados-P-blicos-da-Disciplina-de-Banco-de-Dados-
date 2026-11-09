@@ -14,14 +14,22 @@ def normalizar_documento(documento):
     return re.sub(r"[^0-9]", "", str(documento or ""))
 
 
-def buscar_produtores(conectar, documento):
-    chave = normalizar_documento(documento)
-    if not chave:
-        raise ValueError("Informe o CPF ou CNPJ para buscar.")
+def buscar_produtores(conectar, documento, por_codigo=False):
+    if por_codigo:
+        codigo = str(documento or "").strip()
+        if not re.fullmatch(r"[0-9]+", codigo) or int(codigo) <= 0:
+            raise ValueError("Informe um código de produtor válido, como o exibido na tabela.")
+    else:
+        chave = normalizar_documento(documento)
+        if not chave:
+            raise ValueError("Informe o CPF ou CNPJ para buscar.")
     conn = conectar("db_feira_online")
     try:
         cursor = conn.cursor(dictionary=True)
         try:
+            if por_codigo:
+                cursor.execute("SELECT * FROM tb_produtor WHERE id_produtor = %s", (int(codigo),))
+                return cursor.fetchall()
             cursor.execute("SELECT * FROM tb_produtor ORDER BY id_produtor")
             return [r for r in cursor.fetchall() if normalizar_documento(r["cpf_cnpj"]) == chave]
         finally:
