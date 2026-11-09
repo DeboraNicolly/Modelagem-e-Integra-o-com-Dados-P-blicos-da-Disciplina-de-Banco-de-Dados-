@@ -236,19 +236,23 @@ with aba_crud_prod:
 # ==============================================================================
 with aba_crud_produtor:
     st.subheader("Cadastro e edição de produtores")
-    st.caption("Busque pelo CPF/CNPJ para editar. A inativação preserva o cadastro e seu histórico.")
+    st.caption("Busque pelo CPF/CNPJ ou pelo código da tabela para editar. Use o código para completar cadastros antigos sem documento.")
     mensagem = st.session_state.pop("produtor_mensagem", None)
     if mensagem:
         st.success(mensagem)
 
+    tipo_busca = st.radio("Buscar produtor por", ["CPF/CNPJ", "Código do produtor"], horizontal=True)
     with st.form("buscar_produtor"):
-        documento_busca = st.text_input("Buscar por CPF ou CNPJ", help="Digite com ou sem pontuação.")
+        documento_busca = st.text_input(
+            "Código do produtor" if tipo_busca == "Código do produtor" else "Buscar por CPF ou CNPJ",
+            help="Informe o código exibido na tabela." if tipo_busca == "Código do produtor" else "Digite com ou sem pontuação.",
+        )
         buscar = st.form_submit_button("Buscar produtor")
     if buscar:
         st.session_state.pop("produtor_resultados", None)
         st.session_state["produtor_versao"] = st.session_state.get("produtor_versao", 0) + 1
         try:
-            encontrados = buscar_produtores(get_connection, documento_busca)
+            encontrados = buscar_produtores(get_connection, documento_busca, por_codigo=tipo_busca == "Código do produtor")
             st.session_state["produtor_resultados"] = encontrados
             if not encontrados:
                 st.info("Nenhum produtor encontrado. Use o cadastro abaixo.")
