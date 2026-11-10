@@ -1,4 +1,4 @@
-num_ano_gravacao;num_mes_gravacao;munipio_armazem_venda;uf;qtd_produto_kg;valor_comercializado;numero_atendimentos;clientes_atendidos
+num_ano_gravacao;num_mes_gravacao;municipio_armazem_venda;uf;qtd_produto_kg;valor_comercializado;numero_atendimentos;clientes_atendidos
 2021;1;RIO BRANCO;AC;138861;205514.28;284;220
 2021;1;MACEIÓ;AL;129300;156514.8;122;73
 2021;1;PALMEIRA DOS ÍNDIOS;AL;24420;29779.2;21;20

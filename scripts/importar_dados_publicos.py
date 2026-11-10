@@ -1,19 +1,24 @@
+import os
+from pathlib import Path
+
+PROCESSED_DIR = Path(__file__).resolve().parents[1] / "data" / "processed"
+
 import pandas as pd
 import mysql.connector
 import numpy as np
 
 # Conecte ao seu banco de dados (coloque a sua palavra-passe)
 conn = mysql.connector.connect(
-    host="localhost", 
-    user="debora", 
-    password="abacaxi123", 
+    host=os.getenv("MYSQL_HOST", "localhost"), 
+    user=os.getenv("MYSQL_USER", "root"), 
+    password=os.getenv("MYSQL_PASSWORD", ""), 
     database="db_analise_publica"
 )
 cursor = conn.cursor()
 
 def inserir_dados(tabela, csv_file, query_insert):
     print(f"A ler o ficheiro {csv_file}...")
-    df = pd.read_csv(csv_file, sep=";")
+    df = pd.read_csv(PROCESSED_DIR / csv_file, sep=";")
     # Substituir possíveis NaNs do Pandas por None (NULL no MySQL)
     df = df.replace({np.nan: None}) 
     
