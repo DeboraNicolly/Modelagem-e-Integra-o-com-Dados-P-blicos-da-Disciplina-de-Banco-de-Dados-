@@ -152,9 +152,6 @@ Feira-Online-Sustentavel-RN/
 | `data/raw/` | Arquivos originais dos conjuntos de dados públicos. |
 | `data/processed/` | Arquivos CSV tratados e preparados para importação. |
 | `scripts/` | Scripts Python para limpeza e importação dos dados. |
-| `docs/modelo_er/` | Diagramas Entidade-Relacionamento dos bancos de dados. |
-| `docs/modelo_relacional/` | Representações dos modelos relacionais e suas chaves. |
-| `docs/relatorio/` | Relatório técnico e documentação acadêmica. |
 
 ---
 
