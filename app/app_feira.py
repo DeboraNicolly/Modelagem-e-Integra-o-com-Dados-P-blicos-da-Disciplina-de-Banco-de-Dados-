@@ -3,6 +3,7 @@ import re
 import streamlit as st
 import mysql.connector
 import pandas as pd
+import altair as alt
 
 
 st.set_page_config(page_title="Feira Online Sustentável - RN", layout="wide")
@@ -197,6 +198,7 @@ def query_df(sql, db="db_feira_online", params=None):
         if conn is not None:
             conn.close()
 
+
 def execute_sql(sql, params=None, db="db_feira_online"):
     conn = get_connection(db)
     cursor = conn.cursor()
@@ -204,6 +206,7 @@ def execute_sql(sql, params=None, db="db_feira_online"):
     conn.commit()
     cursor.close()
     conn.close()
+
 
 st.title("🌱 Feira Online Sustentável — Gestão e Inteligência de Mercado")
 st.markdown("Plataforma integrada de comercialização da agricultura familiar e análise do abastecimento regional no Rio Grande do Norte.")
@@ -284,7 +287,6 @@ with aba_crud_prod:
             prod_opcoes = {f"{r['nome_produtor']} ({r['cidade']})": r["id_produtor"] for _, r in produtores_df.iterrows()}
             cat_opcoes = {r["nome_categoria"]: r["id_categoria"] for _, r in categorias_df.iterrows()}
 
-            ### CORREÇÃO: Verificação adicionada para evitar erro (KeyError) se não houver produtores ou categorias cadastradas
             if prod_opcoes and cat_opcoes:
                 produtor_sel = st.selectbox("Produtor Responsável", list(prod_opcoes.keys()))
                 categoria_sel = st.selectbox("Categoria", list(cat_opcoes.keys()))
@@ -305,8 +307,7 @@ with aba_crud_prod:
                     st.rerun()
             else:
                 st.warning("Cadastre produtores e categorias antes de adicionar produtos.")
-                # Botão dummy apenas para manter o layout do st.form que exige um submit_button
-                st.form_submit_button("Salvar Produto", disabled=True) 
+                st.form_submit_button("Salvar Produto", disabled=True)
 
     # --- ATUALIZAR PRODUTO ---
     with col_upd:
@@ -314,7 +315,6 @@ with aba_crud_prod:
         with st.form("form_update_produto"):
             mapa_prod = {f"#{r['id_produto']} - {r['nome_produto']}": r for _, r in produtos_df.iterrows()}
             
-            ### CORREÇÃO: Verificação adicionada para evitar erro (KeyError) se não houver produtos cadastrados
             if mapa_prod:
                 prod_chave = st.selectbox("Selecione o Item", list(mapa_prod.keys()))
                 registro_atual = mapa_prod[prod_chave]
@@ -335,7 +335,6 @@ with aba_crud_prod:
     with col_del:
         st.markdown("### 🗑️ Retirar do Catálogo")
         with st.form("form_delete_produto"):
-            ### CORREÇÃO: Reaproveita a verificação 'mapa_prod' para evitar erro (KeyError) aqui também
             if mapa_prod:
                 prod_del_chave = st.selectbox("Selecione o Item para Remoção", list(mapa_prod.keys()))
                 id_del = int(mapa_prod[prod_del_chave]["id_produto"])
@@ -453,70 +452,547 @@ with aba_crud_produtor:
 # ABA 4: INTELIGÊNCIA DE MERCADO E DADOS PÚBLICOS
 # ==============================================================================
 with aba_analise:
-    st.subheader("Desempenho Regional — Polos de Abastecimento no Rio Grande do Norte")
-    st.caption("Fonte: Programa de Vendas em Balcão (CONAB) e Cadastro Nacional de Produtores Orgânicos (MAPA).")
-
-    sql_vb_rn = """
-        SELECT municipio_armazem_venda AS Polo_RN,
-               SUM(qtd_produto_kg) AS Total_kg,
-               ROUND(AVG(qtd_produto_kg), 2) AS Media_Mensal_kg,
-               MIN(qtd_produto_kg) AS Min_kg,
-               MAX(qtd_produto_kg) AS Max_kg,
-               ROUND(SUM(valor_comercializado), 2) AS Total_Reais,
-               SUM(clientes_atendidos) AS Clientes_Atendidos
-        FROM conab_venda_balcao
-        WHERE uf = 'RN'
-        GROUP BY municipio_armazem_venda
-        ORDER BY Total_kg DESC
-    """
-    df_rn = query_df(sql_vb_rn, db="db_analise_publica")
-
-    # Renomeando as colunas para apresentação executiva na tabela
-    df_rn_exibicao = df_rn.rename(columns={
-        "Polo_RN": "Polo Regional (RN)",
-        "Total_kg": "Volume Total (kg)",
-        "Media_Mensal_kg": "Média Mensal (kg)",
-        "Min_kg": "Menor Volume Mensal (kg)",
-        "Max_kg": "Maior Volume Mensal (kg)",
-        "Total_Reais": "Valor Movimentado (R$)",
-        "Clientes_Atendidos": "Pequenos Produtores Atendidos"
-    })
-    st.dataframe(df_rn_exibicao, use_container_width=True, hide_index=True)
-
-    st.divider()
-
-    ### CORREÇÃO: Erro de sintaxe (parêntese no final do dicionário) foi corrigido para chave '}' 
-    opcoes_metricas = {
-        "Volume Total Comercializado (kg)": {"coluna": "Total_kg", "cor": "#10b981"}, # Verde
-        "Média Mensal Comercializada (kg)": {"coluna": "Media_Mensal_kg", "cor": "#3b82f6"}, # Azul
-        "Maior Volume Registrado no Mês (kg)": {"coluna": "Max_kg", "cor": "#f59e0b"}, # Laranja
-        "Menor Volume Registrado no Mês (kg)": {"coluna": "Min_kg", "cor": "#ec4899"}, # Rosa
-        "Valor Total Movimentado (R$)": {"coluna": "Total_Reais", "cor": "#8b5cf6"},  # Roxo
-        "Total de Produtores / Clientes Atendidos": {"coluna": "Clientes_Atendidos", "cor": "#06b6d4"} # Azul claro (ERRO CORRIGIDO AQUI)
-    }
-
-    col_sel, col_info = st.columns([2, 1])
-    with col_sel:
-        metrica_escolhida = st.selectbox(
-            "Selecione o indicador para visualização gráfica:",
-            list(opcoes_metricas.keys())
-        )
-
-    config_atual = opcoes_metricas[metrica_escolhida]
-    coluna_dados = config_atual["coluna"]
-    cor_grafico = config_atual["cor"]
-
-    with col_info:
-        valor_destaque = df_rn[coluna_dados].max()
-        polo_lider = df_rn.loc[df_rn[coluna_dados].idxmax(), "Polo_RN"]
-        st.metric(
-            label=f"Destaque Estadual ({polo_lider})",
-            value=f"{valor_destaque:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-        )
-
-    st.markdown(f"#### Comparativo entre Polos — {metrica_escolhida}")
-    st.bar_chart(
-        data=df_rn.set_index("Polo_RN")[coluna_dados],
-        color=cor_grafico,
-        use_container_width=True
+    st.subheader("Análise de Dados Públicos — CNPO/MAPA e CONAB")
+    st.caption(
+        "Fonte: Cadastro Nacional de Produtores Orgânicos (MAPA), Programa de Venda em Balcão (CONAB) "
+        "e Balanço de Oferta e Demanda (CONAB)."
     )
+
+    def query_publica(sql, params=None):
+        """Consulta o banco de dados públicos aceitando tanto 'db_analise_publica' quanto 'analise_publica_dos_dados'."""
+        for nome_db in ("db_analise_publica", "analise_publica_dos_dados"):
+            conn = None
+            try:
+                conn = get_connection(nome_db)
+                return pd.read_sql(sql, conn, params=params)
+            except mysql.connector.Error as erro:
+                if erro.errno == 1049:
+                    continue
+                st.error(f"Erro ao consultar o banco {nome_db}: {erro}")
+                st.stop()
+            except pd.errors.DatabaseError as erro:
+                if "1049" in str(erro) or "Unknown database" in str(erro):
+                    continue
+                st.error(f"Erro na consulta SQL em {nome_db}: {erro}")
+                st.stop()
+            finally:
+                if conn is not None:
+                    conn.close()
+        st.error(
+            "Não foi possível encontrar o banco de dados públicos ('db_analise_publica' ou 'analise_publica_dos_dados'). "
+            "Verifique se o banco foi criado e populado no MySQL."
+        )
+        st.stop()
+
+    def formatar_int(valor):
+        return f"{int(round(float(valor))):,}".replace(",", ".")
+
+    def formatar_moeda(valor):
+        return f"R$ {float(valor):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+    def formatar_decimal(valor):
+        return f"{float(valor):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+    def exibir_metricas_destaque(df_dados, col_valor, col_categoria=None, formato="int"):
+        """Exibe os 4 cartões de destaque padronizados: Máximo, Mínimo, Média e Soma (Total)."""
+        serie = df_dados[col_valor].astype(float)
+        if serie.empty:
+            return
+
+        fn_fmt = {
+            "int": formatar_int,
+            "moeda": formatar_moeda,
+            "decimal": formatar_decimal,
+        }.get(formato, formatar_decimal)
+
+        idx_max = serie.idxmax()
+        idx_min = serie.idxmin()
+        val_max = serie.loc[idx_max]
+        val_min = serie.loc[idx_min]
+        val_media = serie.mean()
+        val_soma = serie.sum()
+
+        label_max = f"Máximo ({df_dados.loc[idx_max, col_categoria]})" if col_categoria else "Máximo"
+        label_min = f"Mínimo ({df_dados.loc[idx_min, col_categoria]})" if col_categoria else "Mínimo"
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric(label_max, fn_fmt(val_max))
+        m2.metric(label_min, fn_fmt(val_min))
+        m3.metric("Média", formatar_moeda(val_media) if formato == "moeda" else formatar_decimal(val_media))
+        m4.metric("Soma (Total)", fn_fmt(val_soma))
+
+    def grafico_barras_horizontal(df_plot, col_cat, col_val, titulo, label_x, label_y="", cor="#1b7857"):
+        altura = max(380, len(df_plot) * 24)
+        chart = (
+            alt.Chart(df_plot)
+            .mark_bar(color=cor)
+            .encode(
+                x=alt.X(f"{col_val}:Q", title=label_x),
+                y=alt.Y(
+                    f"{col_cat}:N",
+                    sort=df_plot[col_cat].tolist(),
+                    title=label_y,
+                    axis=alt.Axis(labelLimit=300)
+                ),
+                tooltip=[
+                    alt.Tooltip(f"{col_cat}:N", title=label_y or "Categoria"),
+                    alt.Tooltip(f"{col_val}:Q", title=label_x, format=",.2f"),
+                ],
+            )
+            .properties(title=titulo, height=altura)
+        )
+        st.altair_chart(chart, use_container_width=True)
+
+    sub_uf, sub_rn, sub_conab_uf, sub_oferta, sub_valor_medio, sub_polos = st.tabs([
+        "Produtores por Estado",
+        "Produtores no RN",
+        "Comercialização (CONAB)",
+        "Oferta e Demanda",
+        "Valor Médio no RN",
+        "Polos Regionais (RN)"
+    ])
+
+    # --------------------------------------------------------------------------
+    # Distribuição de Produtores Orgânicos por Estado
+    # --------------------------------------------------------------------------
+    with sub_uf:
+        st.markdown("### Distribuição de Produtores Orgânicos por Estado")
+
+        sql_prod_uf = """
+            SELECT
+                UPPER(TRIM(uf)) AS estado,
+                COUNT(*) AS total_produtores
+            FROM cnpo_produtores
+            WHERE UPPER(TRIM(pais)) = 'BRASIL'
+              AND UPPER(TRIM(uf)) IN (
+                  'AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG',
+                  'PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'
+              )
+            GROUP BY UPPER(TRIM(uf))
+            ORDER BY total_produtores DESC
+        """
+        df_uf = query_publica(sql_prod_uf)
+
+        if not df_uf.empty:
+            exibir_metricas_destaque(df_uf, "total_produtores", "estado", formato="int")
+            st.divider()
+
+            recorte_uf = st.selectbox(
+                "Registros exibidos:",
+                ["Todos os estados", "10 primeiros e RN", "10 primeiros"],
+                key="rec_uf"
+            )
+
+            df_uf_ord = df_uf.reset_index(drop=True)
+            df_uf_ord["posicao"] = [f"{i}º" for i in range(1, len(df_uf_ord) + 1)]
+
+            if recorte_uf == "10 primeiros e RN":
+                df_uf_exib = pd.concat([
+                    df_uf_ord.head(10),
+                    df_uf_ord[df_uf_ord["estado"] == "RN"]
+                ]).drop_duplicates(subset=["estado"]).reset_index(drop=True)
+            elif recorte_uf == "10 primeiros":
+                df_uf_exib = df_uf_ord.head(10).reset_index(drop=True)
+            else:
+                df_uf_exib = df_uf_ord
+
+            col_t1, col_g1 = st.columns([1, 1.3])
+            with col_t1:
+                st.markdown("**Distribuição de produtores orgânicos por estado**")
+                df_t1_exib = df_uf_exib[["posicao", "estado", "total_produtores"]].rename(columns={
+                    "posicao": "Posição",
+                    "estado": "Estado",
+                    "total_produtores": "Registros"
+                })
+                st.dataframe(df_t1_exib, use_container_width=True, hide_index=True)
+
+            with col_g1:
+                st.markdown("**Estados por quantidade de registros de produtores orgânicos**")
+                grafico_barras_horizontal(
+                    df_uf_exib,
+                    col_cat="estado",
+                    col_val="total_produtores",
+                    titulo="Produtores orgânicos cadastrados por estado",
+                    label_x="Registros",
+                    label_y="Estado",
+                    cor="#1b7857"
+                )
+
+    # --------------------------------------------------------------------------
+    # Análise dos Produtores Orgânicos no Rio Grande do Norte
+    # --------------------------------------------------------------------------
+    with sub_rn:
+        st.markdown("### Produtores Orgânicos no Rio Grande do Norte por Município")
+
+        sql_prod_rn = """
+            SELECT
+                UPPER(TRIM(cidade)) AS municipio,
+                COUNT(*) AS total_produtores
+            FROM cnpo_produtores
+            WHERE UPPER(TRIM(uf)) = 'RN'
+              AND UPPER(TRIM(pais)) = 'BRASIL'
+              AND cidade IS NOT NULL
+              AND TRIM(cidade) <> ''
+            GROUP BY UPPER(TRIM(cidade))
+            ORDER BY total_produtores DESC
+        """
+        df_mun_rn = query_publica(sql_prod_rn)
+
+        if not df_mun_rn.empty:
+            exibir_metricas_destaque(df_mun_rn, "total_produtores", "municipio", formato="int")
+            st.divider()
+
+            recorte_rn = st.selectbox(
+                "Registros exibidos:",
+                ["Todos os municípios", "10 primeiros"],
+                key="rec_rn"
+            )
+
+            df_rn_ord = df_mun_rn.reset_index(drop=True)
+
+            if recorte_rn == "10 primeiros":
+                df_rn_exib = df_rn_ord.head(10).reset_index(drop=True)
+            else:
+                df_rn_exib = df_rn_ord
+
+            col_t2, col_g2 = st.columns([1, 1.3])
+            with col_t2:
+                st.markdown("**Registros de produtores orgânicos por município (RN)**")
+                df_t2_exib = df_rn_exib.rename(columns={
+                    "municipio": "Município",
+                    "total_produtores": "Registros"
+                })
+                st.dataframe(df_t2_exib, use_container_width=True, hide_index=True)
+
+            with col_g2:
+                st.markdown("**Distribuição de produtores orgânicos por município (RN)**")
+                grafico_barras_horizontal(
+                    df_rn_exib,
+                    col_cat="municipio",
+                    col_val="total_produtores",
+                    titulo="Produtores orgânicos por município no RN",
+                    label_x="Registros",
+                    label_y="Município",
+                    cor="#1b7857"
+                )
+
+    # --------------------------------------------------------------------------
+    # Análise dos Dados de Comercialização da CONAB
+    # --------------------------------------------------------------------------
+    with sub_conab_uf:
+        st.markdown("### Comercialização no Programa de Venda em Balcão por Estado (CONAB)")
+
+        sql_conab_uf = """
+            SELECT
+                uf AS estado,
+                COUNT(*) AS total_registros,
+                SUM(qtd_produto_kg) AS volume_total_kg,
+                ROUND(SUM(valor_comercializado), 2) AS valor_total_reais,
+                SUM(numero_atendimentos) AS total_atendimentos,
+                SUM(clientes_atendidos) AS total_clientes_atendidos
+            FROM conab_venda_balcao
+            GROUP BY uf
+            ORDER BY volume_total_kg DESC
+        """
+        df_vb_uf = query_publica(sql_conab_uf)
+
+        if not df_vb_uf.empty:
+            df_vb_uf["volume_milhoes_kg"] = (df_vb_uf["volume_total_kg"].astype(float) / 1e6).round(2)
+
+            metricas_vb = {
+                "Volume Comercializado (kg)": ("volume_total_kg", "int", "volume_milhoes_kg", "Milhões de kg"),
+                "Valor Comercializado (R$)": ("valor_total_reais", "moeda", "valor_total_reais", "Valor (R$)"),
+                "Total de Atendimentos": ("total_atendimentos", "int", "total_atendimentos", "Atendimentos"),
+                "Clientes Atendidos": ("total_clientes_atendidos", "int", "total_clientes_atendidos", "Clientes Atendidos"),
+            }
+
+            c_met, c_rec = st.columns(2)
+            with c_met:
+                met_vb_nome = st.selectbox("Indicador em destaque:", list(metricas_vb.keys()), key="met_vb_uf")
+            with c_rec:
+                recorte_vb = st.selectbox("Registros exibidos:", ["Todos os estados", "10 primeiros"], key="rec_vb_uf")
+
+            col_metrica, fmt_metrica, col_grafico_vb, label_eixo_vb = metricas_vb[met_vb_nome]
+
+            exibir_metricas_destaque(df_vb_uf, col_metrica, "estado", formato=fmt_metrica)
+            st.divider()
+
+            df_vb_ord = df_vb_uf.sort_values(by=col_metrica, ascending=False).reset_index(drop=True)
+
+            if recorte_vb == "10 primeiros":
+                df_vb_exib = df_vb_ord.head(10).reset_index(drop=True)
+            else:
+                df_vb_exib = df_vb_ord
+
+            col_t3, col_g3 = st.columns([1.15, 1.25])
+            with col_t3:
+                st.markdown("**Volume e valor comercializado por estado**")
+                df_t3_exib = pd.DataFrame({
+                    "UF": df_vb_exib["estado"],
+                    "Volume (kg)": df_vb_exib["volume_total_kg"].apply(formatar_int),
+                    "Valor (R$)": df_vb_exib["valor_total_reais"].apply(formatar_decimal),
+                    "Atendimentos": df_vb_exib["total_atendimentos"].apply(formatar_int),
+                    "Clientes": df_vb_exib["total_clientes_atendidos"].apply(formatar_int),
+                })
+                st.dataframe(df_t3_exib, use_container_width=True, hide_index=True)
+
+            with col_g3:
+                st.markdown(f"**Comparativo por estado — {met_vb_nome}**")
+                grafico_barras_horizontal(
+                    df_vb_exib,
+                    col_cat="estado",
+                    col_val=col_grafico_vb,
+                    titulo=f"{met_vb_nome} por estado",
+                    label_x=label_eixo_vb,
+                    label_y="UF",
+                    cor="#1b7857"
+                )
+
+    # --------------------------------------------------------------------------
+    # Análise dos Indicadores de Oferta e Demanda
+    # --------------------------------------------------------------------------
+    with sub_oferta:
+        st.markdown("### Indicadores de Oferta e Demanda Agrícola (CONAB)")
+
+        sql_od_medias = """
+            SELECT
+                produto,
+                COUNT(dsc_safra) AS safras,
+                ROUND(AVG(producao_1000t), 2) AS producao_media,
+                ROUND(AVG(consumo_1000t), 2) AS consumo_medio
+            FROM conab_oferta_demanda
+            GROUP BY produto
+            ORDER BY produto
+        """
+        sql_od_detalhe = """
+            SELECT
+                produto,
+                dsc_safra AS safra,
+                producao_1000t AS producao,
+                consumo_1000t AS consumo,
+                importacao_1000t AS importacao,
+                exportacao_1000t AS exportacao,
+                estoque_inicial_1000t AS estoque_inicial,
+                estoque_final_1000t AS estoque_final,
+                ROUND(producao_1000t - consumo_1000t, 2) AS diferenca_producao_consumo
+            FROM conab_oferta_demanda
+            ORDER BY
+                produto,
+                CAST(SUBSTRING_INDEX(dsc_safra, '/', 1) AS UNSIGNED)
+        """
+        df_od_medias = query_publica(sql_od_medias)
+        df_od_detalhe = query_publica(sql_od_detalhe)
+
+        if not df_od_medias.empty:
+            opcoes_od = {
+                "Produção Média (1000t)": "producao_media",
+                "Consumo Médio (1000t)": "consumo_medio",
+                "Quantidade de Safras": "safras"
+            }
+
+            ind_od_nome = st.selectbox("Indicador em destaque:", list(opcoes_od.keys()), key="ind_od")
+            col_od_sel = opcoes_od[ind_od_nome]
+            fmt_od = "int" if col_od_sel == "safras" else "decimal"
+
+            exibir_metricas_destaque(df_od_medias, col_od_sel, "produto", formato=fmt_od)
+            st.divider()
+
+            df_od_ord = df_od_medias.sort_values(by=col_od_sel, ascending=False).reset_index(drop=True)
+
+            col_t4, col_g4 = st.columns([1, 1.3])
+            with col_t4:
+                st.markdown("**Médias de produção e consumo por produto (milhares de toneladas)**")
+                df_t4_exib = pd.DataFrame({
+                    "Produto": df_od_ord["produto"],
+                    "Safras": df_od_ord["safras"],
+                    "Produção média": df_od_ord["producao_media"].apply(formatar_decimal),
+                    "Consumo médio": df_od_ord["consumo_medio"].apply(formatar_decimal)
+                })
+                st.dataframe(df_t4_exib, use_container_width=True, hide_index=True)
+
+            with col_g4:
+                st.markdown("**Médias de produção e consumo por produto**")
+                df_plot_od = df_od_ord.copy()
+                df_plot_od["Produção"] = (df_plot_od["producao_media"].astype(float) / 1000.0).round(2)
+                df_plot_od["Consumo"] = (df_plot_od["consumo_medio"].astype(float) / 1000.0).round(2)
+                ordem_produtos = df_plot_od["produto"].tolist()
+                df_long_od = df_plot_od.melt(
+                    id_vars=["produto"],
+                    value_vars=["Produção", "Consumo"],
+                    var_name="Indicador",
+                    value_name="Milhoes_t"
+                )
+                chart_od = (
+                    alt.Chart(df_long_od)
+                    .mark_bar()
+                    .encode(
+                        x=alt.X("produto:N", sort=ordem_produtos, title="Produto", axis=alt.Axis(labelAngle=-25)),
+                        xOffset="Indicador:N",
+                        y=alt.Y("Milhoes_t:Q", title="Milhões de toneladas (média por safra)"),
+                        color=alt.Color(
+                            "Indicador:N",
+                            scale=alt.Scale(domain=["Produção", "Consumo"], range=["#1b7857", "#e69f45"]),
+                            legend=alt.Legend(title="Indicador")
+                        ),
+                        tooltip=[
+                            alt.Tooltip("produto:N", title="Produto"),
+                            alt.Tooltip("Indicador:N", title="Indicador"),
+                            alt.Tooltip("Milhoes_t:Q", title="Milhões de t", format=",.2f"),
+                        ]
+                    )
+                    .properties(title="Produção e consumo médios por produto", height=380)
+                )
+                st.altair_chart(chart_od, use_container_width=True)
+
+        if not df_od_detalhe.empty:
+            st.divider()
+            st.markdown("#### Registros por Safra e Produto")
+            produtos_lista = ["Todos"] + sorted(df_od_detalhe["produto"].unique().tolist())
+            prod_sel = st.selectbox("Filtrar por Produto:", produtos_lista, key="filtro_prod_od")
+
+            df_det_filtrado = (
+                df_od_detalhe.copy() if prod_sel == "Todos"
+                else df_od_detalhe[df_od_detalhe["produto"] == prod_sel].copy()
+            )
+
+            df_det_exib = df_det_filtrado.rename(columns={
+                "produto": "Produto",
+                "safra": "Safra",
+                "producao": "Produção (1000t)",
+                "consumo": "Consumo (1000t)",
+                "importacao": "Importação (1000t)",
+                "exportacao": "Exportação (1000t)",
+                "estoque_inicial": "Estoque Inicial (1000t)",
+                "estoque_final": "Estoque Final (1000t)",
+                "diferenca_producao_consumo": "Saldo Produção - Consumo (1000t)"
+            })
+            st.dataframe(df_det_exib, use_container_width=True, hide_index=True)
+
+    # --------------------------------------------------------------------------
+    # Análise do Valor Médio de Comercialização no Rio Grande do Norte
+    # --------------------------------------------------------------------------
+    with sub_valor_medio:
+        st.markdown("### Valor Médio de Comercialização por Atendimento no Rio Grande do Norte")
+
+        sql_vm_rn = """
+            SELECT
+                municipio_armazem_venda AS municipio,
+                SUM(numero_atendimentos) AS total_atendimentos,
+                ROUND(SUM(valor_comercializado), 2) AS valor_total_reais,
+                ROUND(
+                    SUM(valor_comercializado) /
+                    NULLIF(SUM(numero_atendimentos), 0), 2
+                ) AS valor_medio_por_atendimento
+            FROM conab_venda_balcao
+            WHERE uf = 'RN'
+            GROUP BY municipio_armazem_venda
+            ORDER BY valor_medio_por_atendimento DESC
+        """
+        df_vm_rn = query_publica(sql_vm_rn)
+
+        if not df_vm_rn.empty:
+            opcoes_vm = {
+                "Valor Médio por Atendimento (R$)": ("valor_medio_por_atendimento", "moeda", "R$ por atendimento"),
+                "Valor Total Comercializado (R$)": ("valor_total_reais", "moeda", "Valor total (R$)"),
+                "Total de Atendimentos": ("total_atendimentos", "int", "Atendimentos")
+            }
+
+            ind_vm_nome = st.selectbox("Indicador em destaque:", list(opcoes_vm.keys()), key="ind_vm_rn")
+            col_vm_sel, fmt_vm_sel, eixo_vm_label = opcoes_vm[ind_vm_nome]
+
+            exibir_metricas_destaque(df_vm_rn, col_vm_sel, "municipio", formato=fmt_vm_sel)
+            st.divider()
+
+            df_vm_ord = df_vm_rn.sort_values(by=col_vm_sel, ascending=False).reset_index(drop=True)
+
+            col_t5, col_g5 = st.columns([1, 1.3])
+            with col_t5:
+                st.markdown("**Valor médio por atendimento nos municípios do RN**")
+                df_t5_exib = pd.DataFrame({
+                    "Município": df_vm_ord["municipio"],
+                    "Atendimentos": df_vm_ord["total_atendimentos"].apply(formatar_int),
+                    "Valor total (R$)": df_vm_ord["valor_total_reais"].apply(formatar_decimal),
+                    "Média (R$)": df_vm_ord["valor_medio_por_atendimento"].apply(formatar_decimal)
+                })
+                st.dataframe(df_t5_exib, use_container_width=True, hide_index=True)
+
+            with col_g5:
+                st.markdown(f"**{ind_vm_nome} por município**")
+                grafico_barras_horizontal(
+                    df_vm_ord,
+                    col_cat="municipio",
+                    col_val=col_vm_sel,
+                    titulo=f"{ind_vm_nome} nos municípios do RN",
+                    label_x=eixo_vm_label,
+                    label_y="Município",
+                    cor="#1b7857"
+                )
+
+    # --------------------------------------------------------------------------
+    # Desempenho Regional — Polos de Abastecimento no Rio Grande do Norte
+    # --------------------------------------------------------------------------
+    with sub_polos:
+        st.markdown("### Desempenho Regional — Polos de Abastecimento no Rio Grande do Norte")
+
+        sql_vb_rn = """
+            SELECT municipio_armazem_venda AS Polo_RN,
+                   SUM(qtd_produto_kg) AS Total_kg,
+                   ROUND(AVG(qtd_produto_kg), 2) AS Media_Mensal_kg,
+                   MIN(qtd_produto_kg) AS Min_kg,
+                   MAX(qtd_produto_kg) AS Max_kg,
+                   ROUND(SUM(valor_comercializado), 2) AS Total_Reais,
+                   SUM(clientes_atendidos) AS Clientes_Atendidos
+            FROM conab_venda_balcao
+            WHERE uf = 'RN'
+            GROUP BY municipio_armazem_venda
+            ORDER BY Total_kg DESC
+        """
+        df_rn = query_publica(sql_vb_rn)
+
+        if not df_rn.empty:
+            opcoes_metricas = {
+                "Volume Total Comercializado (kg)": {"coluna": "Total_kg", "cor": "#10b981", "formato": "int"},
+                "Média Mensal Comercializada (kg)": {"coluna": "Media_Mensal_kg", "cor": "#3b82f6", "formato": "decimal"},
+                "Maior Volume Registrado no Mês (kg)": {"coluna": "Max_kg", "cor": "#f59e0b", "formato": "int"},
+                "Menor Volume Registrado no Mês (kg)": {"coluna": "Min_kg", "cor": "#ec4899", "formato": "int"},
+                "Valor Total Movimentado (R$)": {"coluna": "Total_Reais", "cor": "#8b5cf6", "formato": "moeda"},
+                "Total de Produtores / Clientes Atendidos": {"coluna": "Clientes_Atendidos", "cor": "#06b6d4", "formato": "int"}
+            }
+
+            metrica_escolhida = st.selectbox(
+                "Selecione o indicador para análise e visualização:",
+                list(opcoes_metricas.keys()),
+                key="sel_metrica_polos"
+            )
+
+            config_atual = opcoes_metricas[metrica_escolhida]
+            coluna_dados = config_atual["coluna"]
+            cor_grafico = config_atual["cor"]
+            formato_dados = config_atual["formato"]
+
+            exibir_metricas_destaque(df_rn, coluna_dados, "Polo_RN", formato=formato_dados)
+            st.divider()
+
+            df_rn_ord = df_rn.sort_values(by=coluna_dados, ascending=False).reset_index(drop=True)
+
+            df_rn_exibicao = df_rn_ord.rename(columns={
+                "Polo_RN": "Polo Regional (RN)",
+                "Total_kg": "Volume Total (kg)",
+                "Media_Mensal_kg": "Média Mensal (kg)",
+                "Min_kg": "Menor Volume Mensal (kg)",
+                "Max_kg": "Maior Volume Mensal (kg)",
+                "Total_Reais": "Valor Movimentado (R$)",
+                "Clientes_Atendidos": "Pequenos Produtores Atendidos"
+            })
+            st.dataframe(df_rn_exibicao, use_container_width=True, hide_index=True)
+
+            st.markdown(f"#### Comparativo entre Polos — {metrica_escolhida}")
+            grafico_barras_horizontal(
+                df_rn_ord,
+                col_cat="Polo_RN",
+                col_val=coluna_dados,
+                titulo=f"Comparativo entre Polos — {metrica_escolhida}",
+                label_x=metrica_escolhida,
+                label_y="Polo Regional (RN)",
+                cor=cor_grafico
+            )
