@@ -77,9 +77,18 @@ def validar_dados(dados, original=None):
     return valores
 
 
+def validar_id_produtor(valor):
+    texto = str(valor or "").strip()
+    if not re.fullmatch(r"[0-9]+", texto) or not 1 <= int(texto) <= 2147483647:
+        raise ValueError("Informe um ID do produtor inteiro entre 1 e 2147483647.")
+    return int(texto)
+
+
 def salvar_produtor(conectar, dados, original=None):
     """Serializa gravações da aplicação e verifica CPF sem máscara antes de salvar."""
-    valores = validar_dados(dados, original)
+    id_informado = validar_id_produtor(dados.get("id_produtor"))
+    if original is not None and id_informado != int(original["id_produtor"]):
+        raise ValueError("O ID do produtor não pode ser alterado durante a edição.")
     conn = conectar("db_feira_online")
     cursor = None
     bloqueado = False
@@ -91,6 +100,9 @@ def salvar_produtor(conectar, dados, original=None):
             raise ValueError("Outro cadastro está sendo salvo. Tente novamente.")
         cursor.execute("SELECT * FROM tb_produtor ORDER BY id_produtor FOR UPDATE")
         registros = cursor.fetchall()
+        if original is None and any(int(r["id_produtor"]) == id_informado for r in registros):
+            raise ValueError(f"O ID {id_informado} já está sendo utilizado. Informe outro ID ou busque esse produtor para editar.")
+        valores = validar_dados(dados, original)
         id_atual = int(original["id_produtor"]) if original is not None else None
         if original is not None:
             atual = next((r for r in registros if r["id_produtor"] == id_atual), None)
@@ -104,8 +116,8 @@ def salvar_produtor(conectar, dados, original=None):
         params = tuple(valores[c] for c in CAMPOS)
         if original is None:
             cursor.execute(
-                "INSERT INTO tb_produtor (" + ", ".join(CAMPOS) + ") VALUES (" + ", ".join(["%s"] * len(CAMPOS)) + ")",
-                params,
+                "INSERT INTO tb_produtor (id_produtor, " + ", ".join(CAMPOS) + ") VALUES (" + ", ".join(["%s"] * (len(CAMPOS) + 1)) + ")",
+                (id_informado,) + params,
             )
         else:
             cursor.execute(
@@ -129,6 +141,345 @@ def salvar_produtor(conectar, dados, original=None):
             conn.close()
 
 
+
+# Base independente, criada exclusivamente para demonstração com dados fictícios.
+import sqlite3
+from pathlib import Path
+
+SCHEMA_DEMO = "-- 1. Tabela de Produtores (alinhada à estrutura do CNPO/MAPA)\nCREATE TABLE tb_produtor (\n    id_produtor INTEGER PRIMARY KEY AUTOINCREMENT,\n    nome_produtor VARCHAR(150) NOT NULL,\n    cpf_cnpj VARCHAR(20) NOT NULL UNIQUE,\n    tipo_certificacao TEXT NOT NULL DEFAULT 'OCS',\n    entidade_certificadora VARCHAR(200),\n    escopo_producao VARCHAR(150) NOT NULL DEFAULT 'PRODUCAO PRIMARIA VEGETAL',\n    cidade VARCHAR(100) NOT NULL,\n    uf CHAR(2) NOT NULL DEFAULT 'RN',\n    contato VARCHAR(120),\n    situacao TEXT NOT NULL DEFAULT 'ATIVO',\n    data_cadastro TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n);\n\n-- 2. Tabela de Categorias\nCREATE TABLE tb_categoria (\n    id_categoria INTEGER PRIMARY KEY AUTOINCREMENT,\n    nome_categoria VARCHAR(80) NOT NULL UNIQUE,\n    descricao VARCHAR(255)\n);\n\n-- 3. Tabela de Produtos da Feira Online\nCREATE TABLE tb_produto (\n    id_produto INTEGER PRIMARY KEY AUTOINCREMENT,\n    id_produtor INT NOT NULL,\n    id_categoria INT NOT NULL,\n    nome_produto VARCHAR(120) NOT NULL,\n    unidade_medida TEXT NOT NULL DEFAULT 'kg',\n    preco_unitario DECIMAL(10, 2) NOT NULL CHECK (preco_unitario > 0),\n    estoque_disponivel DECIMAL(10, 2) NOT NULL DEFAULT 0.00 CHECK (estoque_disponivel >= 0),\n    organico_certificado BOOLEAN NOT NULL DEFAULT TRUE,\n    CONSTRAINT fk_produto_produtor FOREIGN KEY (id_produtor) \n        REFERENCES tb_produtor(id_produtor) ON DELETE CASCADE ON UPDATE CASCADE,\n    CONSTRAINT fk_produto_categoria FOREIGN KEY (id_categoria) \n        REFERENCES tb_categoria(id_categoria) ON DELETE RESTRICT ON UPDATE CASCADE\n);\n\n-- 4. Tabela de Clientes\nCREATE TABLE tb_cliente (\n    id_cliente INTEGER PRIMARY KEY AUTOINCREMENT,\n    nome_cliente VARCHAR(150) NOT NULL,\n    email VARCHAR(120) NOT NULL UNIQUE,\n    telefone VARCHAR(30),\n    cidade VARCHAR(100) NOT NULL DEFAULT 'Natal',\n    uf CHAR(2) NOT NULL DEFAULT 'RN',\n    endereco_entrega VARCHAR(255) NOT NULL\n);\n\n-- 5. Tabela de Pedidos\nCREATE TABLE tb_pedido (\n    id_pedido INTEGER PRIMARY KEY AUTOINCREMENT,\n    id_cliente INT NOT NULL,\n    data_pedido DATETIME DEFAULT CURRENT_TIMESTAMP,\n    status_pedido TEXT NOT NULL DEFAULT 'CONFIRMADO',\n    modalidade_entrega TEXT NOT NULL DEFAULT 'ENTREGA_DOMICILIO',\n    CONSTRAINT fk_pedido_cliente FOREIGN KEY (id_cliente) \n        REFERENCES tb_cliente(id_cliente) ON DELETE RESTRICT ON UPDATE CASCADE\n);\n\n-- 6. Tabela Associativa de Itens do Pedido\nCREATE TABLE tb_item_pedido (\n    id_item INTEGER PRIMARY KEY AUTOINCREMENT,\n    id_pedido INT NOT NULL,\n    id_produto INT NOT NULL,\n    quantidade DECIMAL(10, 2) NOT NULL CHECK (quantidade > 0),\n    preco_unitario_venda DECIMAL(10, 2) NOT NULL CHECK (preco_unitario_venda > 0),\n    CONSTRAINT fk_item_pedido FOREIGN KEY (id_pedido) \n        REFERENCES tb_pedido(id_pedido) ON DELETE CASCADE ON UPDATE CASCADE,\n    CONSTRAINT fk_item_produto FOREIGN KEY (id_produto) \n        REFERENCES tb_produto(id_produto) ON DELETE RESTRICT ON UPDATE CASCADE\n);\n\n-- VIEW 1: Catálogo Completo da Feira\nCREATE VIEW vw_catalogo_feira AS\nSELECT \n    p.id_produto,\n    p.nome_produto,\n    c.nome_categoria,\n    p.unidade_medida,\n    p.preco_unitario,\n    p.estoque_disponivel,\n    pr.id_produtor,\n    pr.nome_produtor,\n    pr.tipo_certificacao,\n    pr.cidade AS cidade_origem,\n    pr.uf AS uf_origem,\n    pr.situacao AS status_produtor\nFROM tb_produto p\nINNER JOIN tb_produtor pr ON p.id_produtor = pr.id_produtor\nINNER JOIN tb_categoria c ON p.id_categoria = c.id_categoria;\n\n-- VIEW 2: Desempenho Financeiro e Volume de Vendas por Produtor\nCREATE VIEW vw_faturamento_produtor AS\nSELECT \n    pr.id_produtor,\n    pr.nome_produtor,\n    pr.cidade,\n    pr.tipo_certificacao,\n    COUNT(DISTINCT ip.id_pedido) AS total_pedidos,\n    COALESCE(SUM(ip.quantidade), 0) AS volume_itens_vendidos,\n    COALESCE(ROUND(SUM(ip.quantidade * ip.preco_unitario_venda), 2), 0.00) AS receita_total_reais\nFROM tb_produtor pr\nLEFT JOIN tb_produto p ON pr.id_produtor = p.id_produtor\nLEFT JOIN tb_item_pedido ip ON p.id_produto = ip.id_produto\nGROUP BY pr.id_produtor, pr.nome_produtor, pr.cidade, pr.tipo_certificacao;\n\n\nCREATE TABLE conab_venda_balcao (id_venda INTEGER PRIMARY KEY, municipio_armazem_venda TEXT, uf TEXT, qtd_produto_kg INTEGER, valor_comercializado REAL, clientes_atendidos INTEGER);\n"
+
+
+
+NOMES_DEMO = [
+    "Ana Beatriz Ferreira da Silva", "Bruno Henrique Oliveira Santos", "Clara Maria Souza Ribeiro",
+    "Daniel Augusto Costa Lima", "Elisa Cristina Nunes de Almeida", "Fábio Alexandre Pereira Rocha",
+    "Gabriela Vitória Martins Alves", "Hugo Leonardo Barbosa Mendes", "Iara Carolina Gomes Duarte",
+    "Jonas Miguel Carvalho Araújo", "Lara Patrícia Fernandes Melo", "Marcos Vinícius Batista Freire",
+    "Nina Gabriela Monteiro Campos", "Otávio César Rodrigues Lopes", "Paula Renata Teixeira Moura",
+    "Rafael Antônio Dias Cavalcante", "Sara Luísa Azevedo Pinheiro", "Tiago José Cardoso Farias",
+    "Vera Lúcia Moreira Dantas", "William Eduardo Castro Tavares", "Yara Letícia Machado Bezerra",
+    "Zélia Aparecida Ramos Vieira", "Bento Francisco Correia Leite", "Célia Regina Andrade Medeiros",
+    "Adriana Helena Freitas Queiroz", "Carlos Alberto Macedo Soares", "Débora Camila Sales Brito",
+    "Eduardo Felipe Torres Guimarães", "Fernanda Isabel Cunha Pires", "Gustavo André Paiva Siqueira",
+    "Helena Cecília Borges Nascimento", "Igor Samuel Matos Peixoto", "Juliana Priscila Reis Fonseca",
+    "Leandro Márcio Viana Assunção", "Márcia Elaine Coelho Amorim", "Nelson Roberto Xavier dos Santos",
+]
+
+
+def cpf_ficticio(indice):
+    # Geração matemática para teste; não consulta nem identifica pessoas reais.
+    base = str(137285409 + indice * 1739207)
+    for peso in (10, 11):
+        resto = sum(int(d) * (peso - i) for i, d in enumerate(base)) % 11
+        base += str(0 if resto < 2 else 11 - resto)
+    return f"{base[:3]}.{base[3:6]}.{base[6:9]}-{base[9:]}"
+
+
+def ampliar_dados_demo(conn):
+    conn.execute("CREATE TABLE IF NOT EXISTS demo_versoes (versao INTEGER PRIMARY KEY)")
+    if conn.execute("SELECT 1 FROM demo_versoes WHERE versao=2").fetchone():
+        return
+    cidades = ['NATAL', 'MOSSORO', 'APODI', 'CAICO', 'CURRAIS NOVOS', 'SAO PAULO DO POTENGI']
+    for i, nome in enumerate(NOMES_DEMO, 1):
+        atual = conn.execute("SELECT nome_produtor,cpf_cnpj FROM tb_produtor WHERE id_produtor=?",(i,)).fetchone()
+        if atual is not None:
+            if ' Exemplo ' in atual[0]:
+                conn.execute("UPDATE tb_produtor SET nome_produtor=? WHERE id_produtor=?",(nome,i))
+                if atual[1] in ('',f'{i:011d}'):
+                    conn.execute("UPDATE tb_produtor SET cpf_cnpj=? WHERE id_produtor=?",(cpf_ficticio(i),i))
+        else:
+            conn.execute("INSERT INTO tb_produtor(id_produtor,nome_produtor,cpf_cnpj,tipo_certificacao,entidade_certificadora,escopo_producao,cidade,uf,contato,situacao) VALUES (?,?,?,?,?,?,?,?,?,?)",(
+                i,nome,cpf_ficticio(i),CERTIFICACOES[(i-1)%4],None if i%3==0 else f'Associação Fictícia {1+i%4}',
+                'PRODUCAO PRIMARIA VEGETAL',cidades[(i-1)%6],'RN',f'produtor{i}@example.invalid','INATIVO' if i%7==0 else 'ATIVO'))
+    novos = [('Rúcula',1,'maco',4.5),('Tomate cereja',1,'kg',12.0),('Manga',2,'kg',6.0),('Acerola',2,'kg',9.0),('Jerimum',3,'kg',5.5),('Polpa de acerola',5,'kg',17.0)]
+    for i in range(24):
+        nome,cat,unidade,preco = novos[i%6]
+        conn.execute("INSERT INTO tb_produto(id_produtor,id_categoria,nome_produto,unidade_medida,preco_unitario,estoque_disponivel,organico_certificado) VALUES (?,?,?,?,?,?,?)",(25+i%12,cat,f'{nome} — lote {i+49:02d}',unidade,preco+(i%4)*.5,30+i*3,i%4!=3))
+    for i in range(48):
+        pedido=conn.execute("INSERT INTO tb_pedido(id_cliente,data_pedido,status_pedido,modalidade_entrega) VALUES (?,?,?,?)",(1+i%24,f'2026-{9+i%2:02d}-{1+i%28:02d} 09:30:00','ENTREGUE' if i%3 else 'CONFIRMADO','RETIRADA_PONTO_FEIRA' if i%2 else 'ENTREGA_DOMICILIO')).lastrowid
+        itens=conn.execute("SELECT id_produto,preco_unitario FROM tb_produto ORDER BY id_produto DESC LIMIT 24").fetchall()
+        for j in range(2):
+            prod,preco=itens[(i*2+j)%len(itens)]
+            conn.execute("INSERT INTO tb_item_pedido(id_pedido,id_produto,quantidade,preco_unitario_venda) VALUES (?,?,?,?)",(pedido,prod,2+(i+j)%7,preco))
+    conn.execute("INSERT INTO demo_versoes VALUES (2)")
+
+
+def ampliar_paineis_demo(conn):
+    if conn.execute("SELECT 1 FROM demo_versoes WHERE versao=3").fetchone():
+        return
+    nomes = ["Alessandra Cristina Lopes de Souza", "Antônio Carlos Oliveira Fernandes", "Bianca Raquel Pereira da Costa", "Diego Henrique Alves Monteiro", "Emanuela Vitória Santos Ribeiro", "Francisco José Medeiros da Silva", "Isabela Maria Nunes Carvalho", "João Pedro Batista de Lima", "Luciana Regina Ferreira Duarte", "Paulo Roberto Araújo Martins", "Renata Cristina Barbosa Freitas", "Sérgio Luiz Gomes de Andrade"]
+    cidades_rn = ['NATAL','MOSSORO','APODI','CAICO','CURRAIS NOVOS','SAO PAULO DO POTENGI','CEARA-MIRIM','MACAIBA','ASSU','TOUROS','PARNAMIRIM','SANTA CRUZ']
+    novos_ids=[]
+    for j,nome in enumerate(nomes,37):
+        if conn.execute('SELECT 1 FROM tb_produtor WHERE id_produtor=?',(j,)).fetchone():
+            continue
+        conn.execute("INSERT INTO tb_produtor(id_produtor,nome_produtor,cpf_cnpj,tipo_certificacao,entidade_certificadora,escopo_producao,cidade,uf,contato,situacao) VALUES (?,?,?,?,?,?,?,?,?,?)",(j,nome,cpf_ficticio(j),CERTIFICACOES[j%4],None if j%3==0 else 'Cooperativa Rural de Demonstração','PRODUCAO PRIMARIA VEGETAL',cidades_rn[(j-37)%12],'RN',f'produtor{j}@example.invalid','ATIVO' if j%5 else 'INATIVO'))
+        novos_ids.append(j)
+    alimentos=[('Abóbora',3,'kg',5.5),('Goiaba',2,'kg',7.5),('Cebolinha',1,'maco',3.0),('Polpa de goiaba',5,'kg',16.0),('Laranja',2,'kg',5.0),('Beterraba',3,'kg',6.2)]
+    for i in range(len(novos_ids)*2):
+        nome,cat,unidade,preco=alimentos[i%6]
+        conn.execute('INSERT INTO tb_produto(id_produtor,id_categoria,nome_produto,unidade_medida,preco_unitario,estoque_disponivel,organico_certificado) VALUES (?,?,?,?,?,?,?)',(novos_ids[i%len(novos_ids)],cat,nome,unidade,preco+(i%4)*.4,40+i*5,i%4!=0))
+    for i in range(12):
+        conn.execute('INSERT INTO tb_cliente(nome_cliente,email,telefone,cidade,uf,endereco_entrega) VALUES (?,?,?,?,?,?)',(nomes[i],f'comprador{i+25}@example.invalid',None,cidades_rn[i],'RN',f'Rua de demonstração, {i+25}'))
+    clientes=[r[0] for r in conn.execute('SELECT id_cliente FROM tb_cliente')]
+    produtos=conn.execute('SELECT id_produto,preco_unitario FROM tb_produto').fetchall()
+    for i in range(60):
+        pedido=conn.execute('INSERT INTO tb_pedido(id_cliente,data_pedido,status_pedido,modalidade_entrega) VALUES (?,?,?,?)',(clientes[i%len(clientes)],f'2026-{1+i%10:02d}-{1+i%28:02d} 11:00:00','ENTREGUE' if i%4 else 'CONFIRMADO','ENTREGA_DOMICILIO' if i%2 else 'RETIRADA_PONTO_FEIRA')).lastrowid
+        for j in range(3):
+            prod,preco=produtos[(i*3+j)%len(produtos)]
+            conn.execute('INSERT INTO tb_item_pedido(id_pedido,id_produto,quantidade,preco_unitario_venda) VALUES (?,?,?,?)',(pedido,prod,1+(i+j)%10,preco))
+    conn.execute("CREATE TABLE IF NOT EXISTS cnpo_produtores (id_registro INTEGER PRIMARY KEY, pais TEXT, uf TEXT, cidade TEXT, nome_produtor TEXT, tipo_entidade TEXT, entidade TEXT, situacao TEXT)")
+    estados={'AC':'RIO BRANCO','AL':'MACEIO','AP':'MACAPA','AM':'MANAUS','BA':'SALVADOR','CE':'FORTALEZA','DF':'BRASILIA','ES':'VITORIA','GO':'GOIANIA','MA':'SAO LUIS','MT':'CUIABA','MS':'CAMPO GRANDE','MG':'BELO HORIZONTE','PA':'BELEM','PB':'JOAO PESSOA','PR':'CURITIBA','PE':'RECIFE','PI':'TERESINA','RJ':'RIO DE JANEIRO','RN':'NATAL','RS':'PORTO ALEGRE','RO':'PORTO VELHO','RR':'BOA VISTA','SC':'FLORIANOPOLIS','SP':'SAO PAULO','SE':'ARACAJU','TO':'PALMAS'}
+    for i,(uf,cidade) in enumerate(estados.items()):
+        quantidade=35+(i*37)%180 if uf!='RN' else 216
+        for j in range(quantidade):
+            municipio=cidades_rn[j%12] if uf=='RN' else cidade
+            conn.execute('INSERT INTO cnpo_produtores(pais,uf,cidade,nome_produtor,tipo_entidade,entidade,situacao) VALUES (?,?,?,?,?,?,?)',('BRASIL',uf,municipio,(NOMES_DEMO+nomes)[j%48],CERTIFICACOES[j%4],'Entidade de demonstração','ATIVO'))
+    cols={r[1] for r in conn.execute('PRAGMA table_info(conab_venda_balcao)')}
+    if 'numero_atendimentos' not in cols:
+        conn.execute('ALTER TABLE conab_venda_balcao ADD COLUMN numero_atendimentos INTEGER NOT NULL DEFAULT 0')
+        conn.execute('UPDATE conab_venda_balcao SET numero_atendimentos=clientes_atendidos*2')
+    for i,(uf,cidade) in enumerate(estados.items()):
+        polos=cidades_rn[6:] if uf=='RN' else [cidade]
+        for k,municipio in enumerate(polos):
+            for mes in range(1,11):
+                volume=120000+(i+1)*31000+mes*8500+k*4200
+                valor=round(volume*(1.15+(i%7)*.12),2)
+                conn.execute('INSERT INTO conab_venda_balcao(municipio_armazem_venda,uf,qtd_produto_kg,valor_comercializado,clientes_atendidos,numero_atendimentos) VALUES (?,?,?,?,?,?)',(municipio,uf,volume,valor,120+i*8+mes*3,240+i*14+mes*5))
+    conn.execute("CREATE TABLE IF NOT EXISTS conab_oferta_demanda (id_balanco INTEGER PRIMARY KEY,produto TEXT,dsc_safra TEXT,producao_1000t REAL,consumo_1000t REAL,importacao_1000t REAL,exportacao_1000t REAL,estoque_inicial_1000t REAL,estoque_final_1000t REAL)")
+    for i,produto in enumerate(['ARROZ','FEIJAO','MILHO','SOJA','TRIGO','ALGODAO','SORGO','AVEIA']):
+        for safra in range(2021,2026):
+            producao=round((8500+i*5200)*(1+(safra-2021)*.045),2)
+            consumo=round(producao*(.68+(i%3)*.08),2)
+            importacao=round(producao*.04,2)
+            exportacao=round(producao*.18,2)
+            inicial=round(producao*.12,2)
+            final=round(inicial+producao+importacao-consumo-exportacao,2)
+            conn.execute('INSERT INTO conab_oferta_demanda(produto,dsc_safra,producao_1000t,consumo_1000t,importacao_1000t,exportacao_1000t,estoque_inicial_1000t,estoque_final_1000t) VALUES (?,?,?,?,?,?,?,?)',(produto,f'{safra}/{safra+1}',producao,consumo,importacao,exportacao,inicial,final))
+    conn.execute('INSERT INTO demo_versoes VALUES (3)')
+
+
+
+def ampliar_volume_demo(conn):
+    if conn.execute("SELECT 1 FROM demo_versoes WHERE versao=4").fetchone():
+        return
+    import random
+    from datetime import datetime, timedelta
+    rng = random.Random(20261111)
+    primeiros = ['Ana','Bruno','Carolina','Daniel','Elisa','Fábio','Gabriela','Henrique','Isabela','João','Larissa','Marcos','Natália','Otávio','Paula','Rafael','Sara','Tiago','Valéria','William','Yara','Zélia','Bento','Célia','Adriana','Carlos','Débora','Eduardo','Fernanda','Gustavo','Helena','Igor','Juliana','Leandro','Márcia','Nelson']
+    sobrenomes = ['Almeida','Barbosa','Carvalho','Dantas','Ferreira','Gomes','Lima','Medeiros','Nascimento','Oliveira','Pereira','Queiroz','Ribeiro','Santos','Teixeira','Vieira','Araújo','Batista','Costa','Duarte','Freitas','Moura','Rocha','Souza']
+    cidades = ['NATAL','MOSSORO','APODI','CAICO','CURRAIS NOVOS','SAO PAULO DO POTENGI','CEARA-MIRIM','MACAIBA','ASSU','TOUROS','PARNAMIRIM','SANTA CRUZ','PAU DOS FERROS','SAO JOSE DE MIPIBU','NOVA CRUZ','JOAO CAMARA','ANGICOS','ACARI','JUCURUTU','BARAUNA','GOIANINHA','EXTREMOZ','SAO GONCALO DO AMARANTE','TANGARA']
+    def nome(i):
+        return f"{primeiros[i%36]} {sobrenomes[(i//36)%24]} de {sobrenomes[(i//864+7)%24]}"
+    def documento(i):
+        base=f"{(341827569+i*7919)%1000000000:09d}"
+        for peso in (10,11):
+            resto=sum(int(d)*(peso-j) for j,d in enumerate(base))%11
+            base+=str(0 if resto<2 else 11-resto)
+        return f"{base[:3]}.{base[3:6]}.{base[6:9]}-{base[9:]}"
+    total=conn.execute('SELECT COUNT(*) FROM tb_produtor').fetchone()[0]
+    proximo=conn.execute('SELECT COALESCE(MAX(id_produtor),0)+1 FROM tb_produtor').fetchone()[0]
+    documentos={normalizar_documento(r[0]) for r in conn.execute('SELECT cpf_cnpj FROM tb_produtor')}
+    rows=[]
+    for i in range(max(0,2000-total)):
+        codigo=proximo+i
+        tentativa=codigo
+        doc=documento(tentativa)
+        while normalizar_documento(doc) in documentos:
+            tentativa+=10000
+            doc=documento(tentativa)
+        documentos.add(normalizar_documento(doc))
+        rows.append((codigo,nome(codigo),doc,CERTIFICACOES[codigo%4],None if codigo%5==0 else f'Associação Rural {sobrenomes[codigo%24]}','PRODUCAO PRIMARIA VEGETAL',cidades[codigo%24],'RN',f'produtor{codigo}@example.invalid','INATIVO' if codigo%10==0 else 'SUSPENSO' if codigo%31==0 else 'ATIVO'))
+    conn.executemany('INSERT INTO tb_produtor(id_produtor,nome_produtor,cpf_cnpj,tipo_certificacao,entidade_certificadora,escopo_producao,cidade,uf,contato,situacao) VALUES (?,?,?,?,?,?,?,?,?,?)',rows)
+    produtores=[r[0] for r in conn.execute('SELECT id_produtor FROM tb_produtor ORDER BY id_produtor')]
+    alimentos=[('Alface crespa',1,'unidade',3.5),('Coentro',1,'maco',2.8),('Rúcula',1,'maco',4.2),('Couve',1,'maco',4.5),('Cebolinha',1,'maco',3.0),('Tomate cereja',1,'kg',12.0),('Banana prata',2,'kg',6.0),('Mamão formosa',2,'kg',5.5),('Manga',2,'kg',7.0),('Goiaba',2,'kg',7.5),('Melancia',2,'kg',3.2),('Acerola',2,'kg',9.0),('Macaxeira',3,'kg',5.5),('Batata-doce',3,'kg',4.5),('Inhame',3,'kg',8.5),('Jerimum',3,'kg',5.0),('Ovos caipiras',4,'duzia',15.0),('Polpa de manga',5,'kg',18.0),('Farinha de mandioca',5,'kg',8.0),('Polpa de acerola',5,'kg',19.0)]
+    total=conn.execute('SELECT COUNT(*) FROM tb_produto').fetchone()[0]
+    rows=[]
+    for i in range(max(0,6000-total)):
+        alimento,cat,unidade,preco=alimentos[i%20]
+        rows.append((produtores[i%len(produtores)],cat,alimento,unidade,round(preco*rng.uniform(.8,1.35),2),rng.randint(0,500),int(i%4!=0)))
+    conn.executemany('INSERT INTO tb_produto(id_produtor,id_categoria,nome_produto,unidade_medida,preco_unitario,estoque_disponivel,organico_certificado) VALUES (?,?,?,?,?,?,?)',rows)
+    total=conn.execute('SELECT COUNT(*) FROM tb_cliente').fetchone()[0]
+    proximo=conn.execute('SELECT COALESCE(MAX(id_cliente),0)+1 FROM tb_cliente').fetchone()[0]
+    conn.executemany('INSERT INTO tb_cliente(id_cliente,nome_cliente,email,cidade,uf,endereco_entrega) VALUES (?,?,?,?,?,?)',[(proximo+i,nome(proximo+i+5000),f'cliente-volume{proximo+i}@example.invalid',cidades[i%24],'RN',f'Rua de Demonstração, {i+1}') for i in range(max(0,3000-total))])
+    clientes=[r[0] for r in conn.execute('SELECT id_cliente FROM tb_cliente')]
+    produtos=conn.execute('SELECT id_produto,preco_unitario FROM tb_produto').fetchall()
+    total=conn.execute('SELECT COUNT(*) FROM tb_pedido').fetchone()[0]
+    proximo=conn.execute('SELECT COALESCE(MAX(id_pedido),0)+1 FROM tb_pedido').fetchone()[0]
+    pedidos=[]
+    itens=[]
+    for i in range(max(0,30000-total)):
+        codigo=proximo+i
+        data=datetime(2024,1,1)+timedelta(days=rng.randrange(1045),hours=rng.randrange(8,19))
+        pedidos.append((codigo,rng.choice(clientes),data.strftime('%Y-%m-%d %H:%M:%S'),'ENTREGUE' if i%5 else 'CONFIRMADO','ENTREGA_DOMICILIO' if i%2 else 'RETIRADA_PONTO_FEIRA'))
+        for produto,preco in rng.sample(produtos,3):
+            itens.append((codigo,produto,rng.randint(1,12),preco))
+    conn.executemany('INSERT INTO tb_pedido(id_pedido,id_cliente,data_pedido,status_pedido,modalidade_entrega) VALUES (?,?,?,?,?)',pedidos)
+    conn.executemany('INSERT INTO tb_item_pedido(id_pedido,id_produto,quantidade,preco_unitario_venda) VALUES (?,?,?,?)',itens)
+    estados=['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO']
+    capitais=['RIO BRANCO','MACEIO','MACAPA','MANAUS','SALVADOR','FORTALEZA','BRASILIA','VITORIA','GOIANIA','SAO LUIS','CUIABA','CAMPO GRANDE','BELO HORIZONTE','BELEM','JOAO PESSOA','CURITIBA','RECIFE','TERESINA','RIO DE JANEIRO','NATAL','PORTO ALEGRE','PORTO VELHO','BOA VISTA','FLORIANOPOLIS','SAO PAULO','ARACAJU','PALMAS']
+    total=conn.execute('SELECT COUNT(*) FROM cnpo_produtores').fetchone()[0]
+    rows=[]
+    for i in range(max(0,100000-total)):
+        indice=rng.choices(range(27),weights=[1+(k*7)%13 for k in range(27)])[0]
+        uf=estados[indice]
+        cidade=rng.choice(cidades) if uf=='RN' else capitais[indice]
+        rows.append(('BRASIL',uf,cidade,nome(i+10000),CERTIFICACOES[i%4],'Entidade de demonstração','ATIVO'))
+    conn.executemany('INSERT INTO cnpo_produtores(pais,uf,cidade,nome_produtor,tipo_entidade,entidade,situacao) VALUES (?,?,?,?,?,?,?)',rows)
+    total=conn.execute('SELECT COUNT(*) FROM conab_venda_balcao').fetchone()[0]
+    rows=[]
+    for i in range(max(0,15000-total)):
+        indice=rng.randrange(27)
+        uf=estados[indice]
+        cidade=rng.choice(cidades) if uf=='RN' else capitais[indice]
+        volume=rng.randint(10000,1800000)
+        clientes_atendidos=rng.randint(40,1600)
+        rows.append((cidade,uf,volume,round(volume*rng.uniform(.9,2.8),2),clientes_atendidos,clientes_atendidos+rng.randint(20,700)))
+    conn.executemany('INSERT INTO conab_venda_balcao(municipio_armazem_venda,uf,qtd_produto_kg,valor_comercializado,clientes_atendidos,numero_atendimentos) VALUES (?,?,?,?,?,?)',rows)
+    produtos_oferta=['ARROZ','FEIJAO','MILHO','SOJA','TRIGO','ALGODAO','SORGO','AVEIA','CEVADA','CENTEIO','AMENDOIM','GIRASSOL','CANOLA','TRITICALE','MAMONA','GERGELIM']
+    existentes=set(conn.execute('SELECT produto,dsc_safra FROM conab_oferta_demanda').fetchall())
+    rows=[]
+    for i,produto in enumerate(produtos_oferta):
+        for ano in range(2011,2026):
+            safra=f'{ano}/{ano+1}'
+            if (produto,safra) in existentes:
+                continue
+            producao=round((4000+i*3000)*(1+(ano-2011)*.03)*rng.uniform(.85,1.15),2)
+            consumo=round(producao*rng.uniform(.6,.95),2)
+            imp=round(producao*.05,2); exp=round(producao*.12,2); inicial=round(producao*.2,2)
+            rows.append((produto,safra,producao,consumo,imp,exp,inicial,round(inicial+producao+imp-consumo-exp,2)))
+    conn.executemany('INSERT INTO conab_oferta_demanda(produto,dsc_safra,producao_1000t,consumo_1000t,importacao_1000t,exportacao_1000t,estoque_inicial_1000t,estoque_final_1000t) VALUES (?,?,?,?,?,?,?,?)',rows)
+    for comando in ['CREATE INDEX IF NOT EXISTS idx_demo_produtor_produto ON tb_produto(id_produtor)','CREATE INDEX IF NOT EXISTS idx_demo_item_produto ON tb_item_pedido(id_produto)','CREATE INDEX IF NOT EXISTS idx_demo_item_pedido ON tb_item_pedido(id_pedido)','CREATE INDEX IF NOT EXISTS idx_demo_cnpo_uf ON cnpo_produtores(uf)','CREATE INDEX IF NOT EXISTS idx_demo_conab_uf ON conab_venda_balcao(uf)']:
+        conn.execute(comando)
+    conn.execute('INSERT INTO demo_versoes VALUES (4)')
+
+
+def preparar_demo(caminho):
+    conn = sqlite3.connect(caminho, timeout=15)
+    try:
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("BEGIN IMMEDIATE")
+        existe = conn.execute("SELECT name FROM sqlite_master WHERE name='tb_produtor'").fetchone()
+        if existe:
+            ampliar_dados_demo(conn)
+            ampliar_paineis_demo(conn)
+            ampliar_volume_demo(conn)
+            conn.commit()
+            return
+        # DDL individual mantém a criação e a carga na mesma transação.
+        for comando in SCHEMA_DEMO.split(';'):
+            if comando.strip():
+                conn.execute(comando)
+        cidades = ['NATAL', 'MOSSORO', 'APODI', 'CAICO', 'CURRAIS NOVOS', 'SAO PAULO DO POTENGI']
+        nomes = ['Ana', 'Bruno', 'Clara', 'Daniel', 'Elisa', 'Fabio', 'Gabriela', 'Hugo', 'Iara', 'Jonas', 'Lara', 'Marcos', 'Nina', 'Otavio', 'Paula', 'Rafael', 'Sara', 'Tiago', 'Vera', 'William', 'Yara', 'Zelia', 'Bento', 'Celia']
+        for i, nome in enumerate(nomes, 1):
+            doc = f'{i:011d}'  # Identificador sintético; não representa CPF válido.
+            if i == 5:
+                doc = ''  # Exercita correção de cadastro legado pela busca por ID.
+            conn.execute("INSERT INTO tb_produtor (nome_produtor,cpf_cnpj,tipo_certificacao,entidade_certificadora,escopo_producao,cidade,uf,contato,situacao) VALUES (?,?,?,?,?,?,?,?,?)", (
+                f'{nome} Exemplo {i:02d}', doc, CERTIFICACOES[(i-1)%4],
+                None if i%3 == 0 else f'Associação Fictícia {1+(i%4)}',
+                'PRODUCAO PRIMARIA VEGETAL', cidades[(i-1)%6], 'RN',
+                f'produtor{i}@example.invalid', 'INATIVO' if i%7==0 else 'SUSPENSO' if i%11==0 else 'ATIVO'))
+        categorias = ['Hortaliças e Folhosas', 'Frutas Tropicais', 'Raízes e Tubérculos', 'Ovos e Derivados', 'Processados Artesanais']
+        for cat in categorias:
+            conn.execute("INSERT INTO tb_categoria(nome_categoria,descricao) VALUES (?,?)",(cat,'Categoria de demonstração'))
+        produtos = [('Alface',1,'unidade',3.5),('Coentro',1,'maco',2.5),('Banana',2,'kg',5.9),('Mamão',2,'kg',6.5),('Macaxeira',3,'kg',5.0),('Batata-doce',3,'kg',4.8),('Ovos caipiras',4,'duzia',14.0),('Polpa de manga',5,'kg',18.0),('Couve',1,'maco',4.0),('Melancia',2,'kg',3.5),('Inhame',3,'kg',8.5),('Farinha de mandioca',5,'kg',7.0)]
+        precos=[]
+        for i in range(48):
+            nome,cat,unidade,base=produtos[i%12]
+            preco=round(base+(i%5)*0.5,2)
+            precos.append(preco)
+            conn.execute("INSERT INTO tb_produto(id_produtor,id_categoria,nome_produto,unidade_medida,preco_unitario,estoque_disponivel,organico_certificado) VALUES (?,?,?,?,?,?,?)",(i%24+1,cat,f'{nome} — lote fictício {i+1:02d}',unidade,preco,15+(i*7)%160,i%4!=3))
+        for i in range(1,25):
+            conn.execute("INSERT INTO tb_cliente(nome_cliente,email,telefone,cidade,uf,endereco_entrega) VALUES (?,?,?,?,?,?)",(f'Cliente Exemplo {i:02d}',f'cliente{i}@example.invalid',None,cidades[i%6],'RN',f'Endereço fictício {i}'))
+        for i in range(1,73):
+            conn.execute("INSERT INTO tb_pedido(id_cliente,data_pedido,status_pedido,modalidade_entrega) VALUES (?,?,?,?)",(1+(i-1)%24,f'2026-{1+(i-1)%9:02d}-{1+(i-1)%28:02d} 10:00:00','ENTREGUE' if i%3 else 'CONFIRMADO','RETIRADA_PONTO_FEIRA'))
+            for j in range(2):
+                prod=(2*(i-1)+j)%48+1
+                conn.execute("INSERT INTO tb_item_pedido(id_pedido,id_produto,quantidade,preco_unitario_venda) VALUES (?,?,?,?)",(i,prod,1+(i+j)%8,precos[prod-1]))
+        for i,cidade in enumerate(cidades):
+            for mes in range(1,9):
+                volume=8000+i*4200+mes*750
+                conn.execute("INSERT INTO conab_venda_balcao(municipio_armazem_venda,uf,qtd_produto_kg,valor_comercializado,clientes_atendidos) VALUES (?,?,?,?,?)",(cidade,'RN',volume,round(volume*(1.2+i*.15),2),40+i*12+mes*3))
+        ampliar_dados_demo(conn)
+        ampliar_paineis_demo(conn)
+        ampliar_volume_demo(conn)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+class CursorDemo:
+    def __init__(self, conn, dictionary=False):
+        self.conn = conn
+        self.cursor = conn.cursor()
+        self.dictionary = dictionary
+        self.resposta = None
+
+    @property
+    def description(self):
+        return self.cursor.description
+
+    @property
+    def rowcount(self):
+        return self.cursor.rowcount
+
+    def execute(self, sql, params=None):
+        self.resposta = None
+        try:
+            if 'GET_LOCK(' in sql:
+                self.conn.execute('BEGIN IMMEDIATE')
+                self.resposta = {'adquirido': 1}
+            elif 'RELEASE_LOCK(' in sql:
+                self.resposta = {'liberado': 1}
+            else:
+                self.cursor.execute(sql.replace(' FOR UPDATE','').replace('%s','?'), params or ())
+        except sqlite3.IntegrityError as erro:
+            raise mysql.connector.IntegrityError(str(erro)) from erro
+        except sqlite3.Error as erro:
+            raise mysql.connector.Error(str(erro)) from erro
+        return self
+
+    def fetchall(self):
+        rows = self.cursor.fetchall()
+        if self.dictionary:
+            return [dict(zip([c[0] for c in self.description], row)) for row in rows]
+        return rows
+
+    def fetchone(self):
+        if self.resposta is not None:
+            return self.resposta
+        row = self.cursor.fetchone()
+        if row is not None and self.dictionary:
+            return dict(zip([c[0] for c in self.description], row))
+        return row
+
+    def close(self):
+        self.cursor.close()
+
+
+class ConexaoDemo:
+    def __init__(self, caminho):
+        self.conn = sqlite3.connect(caminho,timeout=15)
+        self.conn.execute('PRAGMA foreign_keys=ON')
+        self.conn.create_function('SUBSTRING_INDEX', 3, lambda value, sep, count: sep.join(str(value).split(sep)[:int(count)]) if int(count)>0 else sep.join(str(value).split(sep)[int(count):]))
+
+    def cursor(self,dictionary=False):
+        return CursorDemo(self.conn,dictionary)
+
+    def commit(self):
+        self.conn.commit()
+
+    def rollback(self):
+        self.conn.rollback()
+
+    def close(self):
+        self.conn.close()
+
 # A configuração informada na tela fica apenas na sessão do navegador.
 def configuracao_mysql():
     return st.session_state.get("mysql_config", {
@@ -139,9 +490,9 @@ def configuracao_mysql():
 
 
 def get_connection(database_name):
-    return mysql.connector.connect(
-        **configuracao_mysql(), database=database_name, connection_timeout=5
-    )
+    caminho = Path(os.getenv("FEIRA_DEMO_DB", str(Path(__file__).with_name("feira_demo.sqlite3"))))
+    preparar_demo(caminho)
+    return ConexaoDemo(caminho)
 
 
 def mensagem_conexao(erro):
@@ -190,14 +541,13 @@ def query_df(sql, db="db_feira_online", params=None):
     conn = None
     try:
         conn = get_connection(db)
-        return pd.read_sql(sql, conn, params=params)
+        return pd.read_sql(sql.replace("%s", "?"), conn.conn, params=params)
     except (mysql.connector.Error, pd.errors.DatabaseError):
         st.error(f"Não foi possível consultar o banco {db}. Confira o acesso e a existência das tabelas necessárias.")
         st.stop()
     finally:
         if conn is not None:
             conn.close()
-
 
 def execute_sql(sql, params=None, db="db_feira_online"):
     conn = get_connection(db)
@@ -207,8 +557,8 @@ def execute_sql(sql, params=None, db="db_feira_online"):
     cursor.close()
     conn.close()
 
-
-st.title("🌱 Feira Online Sustentável — Gestão e Inteligência de Mercado")
+st.title("🌱 Feira Online Sustentável — Demonstração")
+st.info("DEMONSTRAÇÃO — Todos os nomes, documentos, pedidos e indicadores desta base são fictícios. Alterações feitas aqui afetam somente a demonstração.")
 st.markdown("Plataforma integrada de comercialização da agricultura familiar e análise do abastecimento regional no Rio Grande do Norte.")
 
 verificar_conexao()
@@ -260,7 +610,7 @@ with aba_catalogo:
     st.subheader("Desempenho de Vendas por Produtor")
     df_fat = query_df("SELECT * FROM vw_faturamento_produtor ORDER BY receita_total_reais DESC")
     df_fat_exibicao = df_fat.rename(columns={
-        "id_produtor": "Código",
+        "id_produtor": "ID do produtor",
         "nome_produtor": "Produtor",
         "cidade": "Município",
         "tipo_certificacao": "Modalidade",
@@ -287,6 +637,7 @@ with aba_crud_prod:
             prod_opcoes = {f"{r['nome_produtor']} ({r['cidade']})": r["id_produtor"] for _, r in produtores_df.iterrows()}
             cat_opcoes = {r["nome_categoria"]: r["id_categoria"] for _, r in categorias_df.iterrows()}
 
+            ### CORREÇÃO: Verificação adicionada para evitar erro (KeyError) se não houver produtores ou categorias cadastradas
             if prod_opcoes and cat_opcoes:
                 produtor_sel = st.selectbox("Produtor Responsável", list(prod_opcoes.keys()))
                 categoria_sel = st.selectbox("Categoria", list(cat_opcoes.keys()))
@@ -307,7 +658,8 @@ with aba_crud_prod:
                     st.rerun()
             else:
                 st.warning("Cadastre produtores e categorias antes de adicionar produtos.")
-                st.form_submit_button("Salvar Produto", disabled=True)
+                # Botão dummy apenas para manter o layout do st.form que exige um submit_button
+                st.form_submit_button("Salvar Produto", disabled=True) 
 
     # --- ATUALIZAR PRODUTO ---
     with col_upd:
@@ -315,6 +667,7 @@ with aba_crud_prod:
         with st.form("form_update_produto"):
             mapa_prod = {f"#{r['id_produto']} - {r['nome_produto']}": r for _, r in produtos_df.iterrows()}
             
+            ### CORREÇÃO: Verificação adicionada para evitar erro (KeyError) se não houver produtos cadastrados
             if mapa_prod:
                 prod_chave = st.selectbox("Selecione o Item", list(mapa_prod.keys()))
                 registro_atual = mapa_prod[prod_chave]
@@ -335,6 +688,7 @@ with aba_crud_prod:
     with col_del:
         st.markdown("### 🗑️ Retirar do Catálogo")
         with st.form("form_delete_produto"):
+            ### CORREÇÃO: Reaproveita a verificação 'mapa_prod' para evitar erro (KeyError) aqui também
             if mapa_prod:
                 prod_del_chave = st.selectbox("Selecione o Item para Remoção", list(mapa_prod.keys()))
                 id_del = int(mapa_prod[prod_del_chave]["id_produto"])
@@ -355,23 +709,19 @@ with aba_crud_prod:
 # ==============================================================================
 with aba_crud_produtor:
     st.subheader("Cadastro e edição de produtores")
-    st.caption("Busque pelo CPF/CNPJ ou pelo código da tabela para editar. Use o código para completar cadastros antigos sem documento.")
+    st.caption("Busque pelo ID do produtor. Cada ID é único e permanece fixo após o cadastro.")
     mensagem = st.session_state.pop("produtor_mensagem", None)
     if mensagem:
         st.success(mensagem)
 
-    tipo_busca = st.radio("Buscar produtor por", ["CPF/CNPJ", "Código do produtor"], horizontal=True)
     with st.form("buscar_produtor"):
-        documento_busca = st.text_input(
-            "Código do produtor" if tipo_busca == "Código do produtor" else "Buscar por CPF ou CNPJ",
-            help="Informe o código exibido na tabela." if tipo_busca == "Código do produtor" else "Digite com ou sem pontuação.",
-        )
+        documento_busca = st.text_input("Buscar por ID do produtor", help="Informe o ID exibido na tabela de produtores.")
         buscar = st.form_submit_button("Buscar produtor")
     if buscar:
         st.session_state.pop("produtor_resultados", None)
         st.session_state["produtor_versao"] = st.session_state.get("produtor_versao", 0) + 1
         try:
-            encontrados = buscar_produtores(get_connection, documento_busca, por_codigo=tipo_busca == "Código do produtor")
+            encontrados = buscar_produtores(get_connection, documento_busca, por_codigo=True)
             st.session_state["produtor_resultados"] = encontrados
             if not encontrados:
                 st.info("Nenhum produtor encontrado. Use o cadastro abaixo.")
@@ -407,8 +757,13 @@ with aba_crud_produtor:
         st.warning("Documento antigo incompleto: confira e corrija o CPF/CNPJ. Você pode atualizar os demais dados sem alterá-lo.")
     chave_form = f"produtor_{registro.get('id_produtor', 'novo')}_{st.session_state.get('produtor_versao', 0)}"
     with st.form(chave_form):
+        id_produtor_form = st.text_input(
+            "ID do produtor *", value=str(registro.get("id_produtor", "")),
+            disabled=original is not None, max_chars=10,
+            help="Informe um número inteiro positivo que ainda não esteja em uso. O ID não muda na edição.",
+        )
         c1, c2, c3 = st.columns(3)
-        dados = {}
+        dados = {"id_produtor": id_produtor_form}
         dados["nome_produtor"] = c1.text_input("Nome completo do produtor *", value=registro.get("nome_produtor", ""), max_chars=150)
         dados["cpf_cnpj"] = c2.text_input("CPF ou CNPJ *", value=registro.get("cpf_cnpj", ""), max_chars=20)
         dados["tipo_certificacao"] = c3.selectbox("Modalidade de certificação *", CERTIFICACOES, index=CERTIFICACOES.index(registro.get("tipo_certificacao", "OCS")))
@@ -425,7 +780,7 @@ with aba_crud_produtor:
             except ValueError as erro:
                 st.error(str(erro))
             except mysql.connector.IntegrityError:
-                st.error("Documento já cadastrado ou conflito de dados. Busque o produtor pelo CPF/CNPJ para editar.")
+                st.error("ID do produtor ou CPF/CNPJ já está sendo utilizado. Confira os dados e busque pelo ID para editar.")
             except mysql.connector.Error:
                 st.error("Não foi possível salvar. Verifique a conexão com o banco e tente novamente.")
             else:
@@ -437,9 +792,9 @@ with aba_crud_produtor:
     st.subheader("Produtores Credenciados na Plataforma")
     df_produtores = query_df("SELECT id_produtor, nome_produtor, cpf_cnpj, tipo_certificacao, entidade_certificadora, cidade, uf, situacao FROM tb_produtor")
     df_produtores_exib = df_produtores.rename(columns={
-        "id_produtor": "Código",
+        "id_produtor": "ID do produtor",
         "nome_produtor": "Produtor",
-        "cpf_cnpj": "Documento",
+        "cpf_cnpj": "CPF/CNPJ",
         "tipo_certificacao": "Certificação",
         "entidade_certificadora": "Entidade / Associação",
         "cidade": "Município",
@@ -454,8 +809,7 @@ with aba_crud_produtor:
 with aba_analise:
     st.subheader("Análise de Dados Públicos — CNPO/MAPA e CONAB")
     st.caption(
-        "Fonte: Cadastro Nacional de Produtores Orgânicos (MAPA), Programa de Venda em Balcão (CONAB) "
-        "e Balanço de Oferta e Demanda (CONAB)."
+        "Dados fictícios para testar os painéis CNPO/MAPA e CONAB. Os valores não representam estatísticas oficiais."
     )
 
     def query_publica(sql, params=None):
@@ -464,7 +818,7 @@ with aba_analise:
             conn = None
             try:
                 conn = get_connection(nome_db)
-                return pd.read_sql(sql, conn, params=params)
+                return pd.read_sql(sql.replace("%s", "?"), conn.conn, params=params)
             except mysql.connector.Error as erro:
                 if erro.errno == 1049:
                     continue
